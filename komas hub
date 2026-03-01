@@ -29,6 +29,13 @@ local Settings = {
     Unwalk = {
         Enabled = false,
     },
+    AntiRagdoll = {
+        Enabled = false,
+    },
+    TPOnHit = {
+        Enabled = false,
+        Side = "Right", -- "Left" or "Right"
+    },
 }
 
 -- // UI Creation //
@@ -425,6 +432,87 @@ CreateSlider("Aimbot Radius", 5, 60, Settings.BatAimbot.Radius, 1, function(val)
     Settings.BatAimbot.Radius = val
 end)
 
+CreateSection("DEFENSE")
+
+CreateToggle("Anti Ragdoll", Settings.AntiRagdoll, "Enabled", function(val) end)
+
+CreateToggle("TP on Hit (Left/Right)", Settings.TPOnHit, "Enabled", function(val) end)
+
+-- Side selector buttons
+local SideFrame = Instance.new("Frame")
+SideFrame.Size = UDim2.new(1, 0, 0, 46)
+SideFrame.BackgroundColor3 = Color3.fromRGB(10, 18, 45)
+SideFrame.BorderSizePixel = 0
+SideFrame.ZIndex = 5
+SideFrame.Parent = ContentFrame
+
+local SFCorner2 = Instance.new("UICorner")
+SFCorner2.CornerRadius = UDim.new(0, 8)
+SFCorner2.Parent = SideFrame
+
+local SFStroke2 = Instance.new("UIStroke")
+SFStroke2.Color = Color3.fromRGB(20, 50, 140)
+SFStroke2.Thickness = 1
+SFStroke2.Parent = SideFrame
+
+local SideLabel = Instance.new("TextLabel")
+SideLabel.Text = "TP Side: RIGHT"
+SideLabel.Size = UDim2.new(0.6, 0, 1, 0)
+SideLabel.Position = UDim2.new(0, 14, 0, 0)
+SideLabel.BackgroundTransparency = 1
+SideLabel.TextColor3 = Color3.fromRGB(180, 210, 255)
+SideLabel.TextSize = 13
+SideLabel.Font = Enum.Font.Gotham
+SideLabel.TextXAlignment = Enum.TextXAlignment.Left
+SideLabel.ZIndex = 6
+SideLabel.Parent = SideFrame
+
+local LeftBtn = Instance.new("TextButton")
+LeftBtn.Text = "LEFT"
+LeftBtn.Size = UDim2.new(0, 60, 0, 28)
+LeftBtn.Position = UDim2.new(1, -130, 0.5, -14)
+LeftBtn.BackgroundColor3 = Color3.fromRGB(15, 35, 90)
+LeftBtn.TextColor3 = Color3.fromRGB(100, 160, 255)
+LeftBtn.TextSize = 12
+LeftBtn.Font = Enum.Font.GothamBold
+LeftBtn.BorderSizePixel = 0
+LeftBtn.ZIndex = 6
+LeftBtn.Parent = SideFrame
+
+local LBCorner = Instance.new("UICorner")
+LBCorner.CornerRadius = UDim.new(0, 6)
+LBCorner.Parent = LeftBtn
+
+local RightBtn = Instance.new("TextButton")
+RightBtn.Text = "RIGHT"
+RightBtn.Size = UDim2.new(0, 60, 0, 28)
+RightBtn.Position = UDim2.new(1, -64, 0.5, -14)
+RightBtn.BackgroundColor3 = Color3.fromRGB(20, 80, 220)
+RightBtn.TextColor3 = Color3.fromRGB(200, 230, 255)
+RightBtn.TextSize = 12
+RightBtn.Font = Enum.Font.GothamBold
+RightBtn.BorderSizePixel = 0
+RightBtn.ZIndex = 6
+RightBtn.Parent = SideFrame
+
+local RBCorner = Instance.new("UICorner")
+RBCorner.CornerRadius = UDim.new(0, 6)
+RBCorner.Parent = RightBtn
+
+LeftBtn.MouseButton1Click:Connect(function()
+    Settings.TPOnHit.Side = "Left"
+    SideLabel.Text = "TP Side: LEFT"
+    LeftBtn.BackgroundColor3 = Color3.fromRGB(20, 80, 220)
+    RightBtn.BackgroundColor3 = Color3.fromRGB(15, 35, 90)
+end)
+
+RightBtn.MouseButton1Click:Connect(function()
+    Settings.TPOnHit.Side = "Right"
+    SideLabel.Text = "TP Side: RIGHT"
+    RightBtn.BackgroundColor3 = Color3.fromRGB(20, 80, 220)
+    LeftBtn.BackgroundColor3 = Color3.fromRGB(15, 35, 90)
+end)
+
 CreateSection("MOVEMENT")
 
 CreateToggle("Speed Hack", Settings.Speed, "Enabled", function(val)
@@ -589,6 +677,91 @@ task.spawn(function()
     end
 end)
 
+-- Anti Ragdoll + TP on Hit Logic
+local function GetEnemyBase(side)
+    -- Try to find the enemy base/spawn by side (Left or Right)
+    -- Brainrot Duels typically has two bases, look for named folders/models
+    local map = workspace:FindFirstChild("Map") or workspace:FindFirstChild("Arena") or workspace
+    local bases = {}
+    for _, obj in ipairs(map:GetChildren()) do
+        if obj.Name:lower():find("base") or obj.Name:lower():find("spawn") or obj.Name:lower():find("team") then
+            table.insert(bases, obj)
+        end
+    end
+    if #bases >= 2 then
+        table.sort(bases, function(a, b)
+            local posA = a:IsA("Model") and a.PrimaryPart and a.PrimaryPart.Position.X or 0
+            local posB = b:IsA("Model") and b.PrimaryPart and b.PrimaryPart.Position.X or 0
+            return posA < posB
+        end)
+        -- Left = index 1, Right = index 2
+        local idx = side == "Left" and 1 or 2
+        local base = bases[idx]
+        if base and base:IsA("Model") and base.PrimaryPart then
+            return base.PrimaryPart.Position
+        end
+    end
+    -- Fallback: estimate left/right from map center
+    local centerX = 0
+    if side == "Left" then
+        return Vector3.new(centerX - 80, HumanoidRootPart.Position.Y, HumanoidRootPart.Position.Z)
+    else
+        return Vector3.new(centerX + 80, HumanoidRootPart.Position.Y, HumanoidRootPart.Position.Z)
+    end
+end
+
+local function ApplyAntiRagdoll(char)
+    if not char then return end
+    for _, obj in ipairs(char:GetDescendants()) do
+        -- Remove ragdoll constraints
+        if obj:IsA("BallSocketConstraint") or obj:IsA("HingeConstraint") then
+            obj.Enabled = false
+        end
+        -- Keep motor6Ds enabled
+        if obj:IsA("Motor6D") then
+            obj.Enabled = true
+        end
+    end
+end
+
+local function WatchForRagdoll(char)
+    if not char then return end
+    char.DescendantAdded:Connect(function(obj)
+        if Settings.AntiRagdoll.Enabled then
+            if obj:IsA("BallSocketConstraint") or obj:IsA("HingeConstraint") then
+                task.wait()
+                obj.Enabled = false
+            end
+        end
+    end)
+
+    -- Watch for Motor6D being disabled (ragdoll trigger)
+    char.DescendantRemoving:Connect(function(obj) end)
+
+    -- Continuously re-enable Motor6Ds when Anti Ragdoll is on
+    task.spawn(function()
+        while char and char.Parent do
+            task.wait(0.1)
+            if Settings.AntiRagdoll.Enabled then
+                ApplyAntiRagdoll(char)
+                -- If humanoid state becomes Physics (ragdoll), force back to running
+                local hum = char:FindFirstChildOfClass("Humanoid")
+                if hum and hum:GetState() == Enum.HumanoidStateType.Physics then
+                    hum:ChangeState(Enum.HumanoidStateType.GettingUp)
+                    -- TP on Hit
+                    if Settings.TPOnHit.Enabled then
+                        local hrp = char:FindFirstChild("HumanoidRootPart")
+                        if hrp then
+                            local targetPos = GetEnemyBase(Settings.TPOnHit.Side)
+                            hrp.CFrame = CFrame.new(targetPos + Vector3.new(0, 3, 0))
+                        end
+                    end
+                end
+            end
+        end
+    end)
+end
+
 -- Speed & Unwalk persistent check
 LocalPlayer.CharacterAdded:Connect(function(char)
     Character = char
@@ -600,7 +773,11 @@ LocalPlayer.CharacterAdded:Connect(function(char)
     if Settings.Unwalk.Enabled then
         Humanoid.WalkSpeed = 0
     end
+    WatchForRagdoll(char)
 end)
+
+-- Apply to current character on load
+WatchForRagdoll(Character)
 
 -- Keybind: RightShift to toggle GUI
 UserInputService.InputBegan:Connect(function(input, gpe)
